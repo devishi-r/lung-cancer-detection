@@ -57,10 +57,10 @@ print(f"✅ Found {len(class_e_dicom_series)} Class E cases.")
 train_transforms = Compose([
     LoadImaged(keys=["image"], reader="PydicomReader", ensure_channel_first=True    ),
     EnsureChannelFirstd(keys=["image"]),  # Add channel for CNN compatibility
-    Orientationd(keys=["image"], axcodes="RAS"),  # Normalize orientation
-    Spacingd(keys=["image"], pixdim=(1.5, 1.5, 2.0), mode="bilinear"),  # Resample
-    RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-    RandRotate90d(keys=["image"], prob=0.5, max_k=3),
+    # Orientationd(keys=["image"], axcodes="RAS"),  # Normalize orientation
+    # Spacingd(keys=["image"], pixdim=(1.5, 1.5, 2.0), mode="bilinear"),  # Resample
+    # RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
+    # RandRotate90d(keys=["image"], prob=0.5, max_k=3),
     RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
     RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
     RandGaussianNoised(keys=["image"], prob=0.3),
@@ -79,6 +79,9 @@ def save_as_dicom(volume_tensor, reference_dicom_files, output_folder, prefix="a
     
     if volume_np.ndim == 2:
         volume_np = volume_np[None, :, :]
+
+    if volume_np.dtype != "int16":
+        volume_np = volume_np.astype("int16")
 
     # Use reference metadata
     reader = sitk.ImageSeriesReader()
