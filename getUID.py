@@ -6,7 +6,7 @@ from utils import *
 # path = 'Data/02-06-2020/DICOM/Lung_Dx-G0011/04-29-2009-LUNGC-51228/2.000000-A phase 5mm Stnd SS50-53792/2-017.dcm'
 # path = 'Lung-PET-CT-Dx/Lung_Dx-E0001/10-25-2007-NA-lung-83596/3.000000-5mm Lung SS50-36046/1-01.dcm'
 # path = 'Lung-PET-CT-Dx/Lung_Dx-E0001/'
-path = 'Lung-PET-CT-Dx/Lung_Dx-A0001/04-04-2007-NA-Chest-07990/2.000000-5mm-40805/1-01.dcm'
+path = 'Lung-PET-CT-Dx/Lung_Dx-A0001/04-04-2007-NA-Chest-07990/2.000000-5mm-40805/'
 
 
 def getUID_path(path):

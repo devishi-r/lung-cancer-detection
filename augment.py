@@ -1,115 +1,83 @@
 import os
-import glob
 import torch
-# import numpy as np
 import SimpleITK as sitk
 from monai.transforms import (
-    LoadImaged, EnsureChannelFirstd, Orientationd, Spacingd,
-    RandFlipd, RandRotate90d, RandScaleIntensityd,
-    RandShiftIntensityd, RandGaussianNoised,
+    LoadImaged, EnsureChannelFirstd,
+    RandFlipd, RandRotate90d,
+    RandScaleIntensityd, RandShiftIntensityd, RandGaussianNoised,
     ToTensord, Compose
 )
 from monai.data import Dataset, DataLoader
-from getUID import *
 
 # =============================
-# STEP 2: Mount Google Drive
+# STEP 1: Setup paths
 # =============================
-# from google.colab import drive
-# drive.mount('/content/drive')
-
-# =============================
-# STEP 3: Define Paths and Gather Class E Data
-# =============================
-# path = 'Lung-PET-CT-Dx/Lung_Dx-E0001/'
-data_dir = "Lung-PET-CT-Dx/Lung_Dx-E0001/"
-output_dir = "LungData_Augmented_Monai/E/"
-os.makedirs(output_dir, exist_ok=True)
-
-
-uid_dict = getUID_path(data_dir)  # {UID: (dicom_path, dicom_file)}
-
-# Group dicoms by UID
-series_dict = {}
-for uid, (dicom_path, dicom_file) in uid_dict.items():
-    series_dict.setdefault(uid, []).append(dicom_path)
-
-# Build MONAI dataset entries
-class_e_dicom_series = [{"image": sorted(paths)} for uid, paths in series_dict.items()]
-print(f"✅ Found {len(class_e_dicom_series)} unique series (by UID).")
-
-
-
-# Find all Class E cases
-# class_e_folders = glob.glob(os.path.join(data_dir, "Lung_Dx-E*"))
-# class_e_dicom_series = []
-
-# for folder in class_e_folders:
-#     dicom_files = glob.glob(os.path.join(folder, "**/*.dcm"), recursive=True)
-#     if dicom_files:
-#         class_e_dicom_series.append({"image": dicom_files})
-
-print(f"✅ Found {len(class_e_dicom_series)} Class E cases.")
+data_dir = "Preprocessed_Volumes/"       # input .nii volumes
+output_root = "Augmented_Nifti/"         # output folder
+num_augmentations = 1                    # number of augmented versions per stack
+os.makedirs(output_root, exist_ok=True)
 
 # =============================
-# STEP 4: Define MONAI Augmentation Pipeline
+# STEP 2: Build dataset entries
+# =============================
+nii_files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".nii")]
+
+data_dicts = []
+for f in nii_files:
+    filename = os.path.basename(f)
+    # everything before "_stackN"
+    series_name = "_".join(filename.split("_")[:-1])
+    data_dicts.append({"image": f, "series_name": series_name})
+
+# =============================
+# STEP 3: Define augmentation pipeline
 # =============================
 train_transforms = Compose([
-    LoadImaged(keys=["image"], reader="PydicomReader", ensure_channel_first=True    ),
-    EnsureChannelFirstd(keys=["image"]),  # Add channel for CNN compatibility
-    # Orientationd(keys=["image"], axcodes="RAS"),  # Normalize orientation
-    # Spacingd(keys=["image"], pixdim=(1.5, 1.5, 2.0), mode="bilinear"),  # Resample
-    # RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
-    # RandRotate90d(keys=["image"], prob=0.5, max_k=3),
+    LoadImaged(keys=["image"], reader="ITKReader", image_only=False),  # load metadata too
+    EnsureChannelFirstd(keys=["image"]),
+    RandFlipd(keys=["image"], prob=0.5, spatial_axis=0),
+    RandRotate90d(keys=["image"], prob=0.5, max_k=3),
     RandScaleIntensityd(keys=["image"], factors=0.1, prob=0.5),
     RandShiftIntensityd(keys=["image"], offsets=0.1, prob=0.5),
     RandGaussianNoised(keys=["image"], prob=0.3),
-    ToTensord(keys=["image"])
+    ToTensord(keys=["image"]),
 ])
 
-dataset = Dataset(data=class_e_dicom_series, transform=train_transforms)
-dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+dataset = Dataset(data=data_dicts, transform=train_transforms)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
 # =============================
-# STEP 5: Function to Save Augmented Volume as DICOM
+# STEP 4: Apply augmentations and save
 # =============================
-def save_as_dicom(volume_tensor, reference_dicom_files, output_folder, prefix="aug"):
-    os.makedirs(output_folder, exist_ok=True)
-    volume_np = volume_tensor.squeeze().cpu().numpy()
-    
-    if volume_np.ndim == 2:
-        volume_np = volume_np[None, :, :]
-
-    if volume_np.dtype != "int16":
-        volume_np = volume_np.astype("int16")
-
-    # Use reference metadata
-    reader = sitk.ImageSeriesReader()
-    reader.SetFileNames(reference_dicom_files)
-    reference_image = reader.Execute()
-
-    # Create new SimpleITK image
-    new_image = sitk.GetImageFromArray(volume_np)
-    new_image.CopyInformation(reference_image)
-
-    # Save as DICOM series
-    writer = sitk.ImageFileWriter()
-    writer.KeepOriginalImageUIDOn()
-    for i in range(volume_np.shape[0]):
-        dicom_path = os.path.join(output_folder, f"{prefix}_{i:03d}.dcm")
-        writer.SetFileName(dicom_path)
-        writer.Execute(new_image[:, :, i])
-
-# =============================
-# STEP 6: Generate Augmented Data
-# =============================
-num_augmentations = 5  # how many augmented versions per original case?
-
 for idx, batch in enumerate(dataloader):
-    print(f"Batch {idx} shape:", batch["image"].shape)
-    original_files = class_e_dicom_series[idx]["image"]
-    for aug_idx in range(num_augmentations):
-        aug_image = batch["image"]  # already transformed
-        aug_folder = os.path.join(output_dir, f"E_case{idx+1}_aug{aug_idx+1}")
-        save_as_dicom(aug_image, original_files, aug_folder)
-        print(f"✅ Saved augmented case {idx+1} - version {aug_idx+1}")
+    # MONAI keeps metadata in "image_meta_dict"
+    meta_dict = batch["image_meta_dict"]
+    file_path = meta_dict["filename_or_obj"][0]
+    series_name = batch["series_name"][0]
+
+    # create output folder mirroring original series
+    series_output_dir = os.path.join(output_root, series_name)
+    os.makedirs(series_output_dir, exist_ok=True)
+
+    for aug_idx in range(1, num_augmentations + 1):
+        image = batch["image"][0]  # tensor
+        image_np = image.squeeze().cpu().numpy()  # shape: [z, y, x]
+
+        # remove channel dim if present
+        if image_np.ndim == 4:
+            image_np = image_np[0]
+
+        # transpose axes to match SITK (X, Y, Z)
+        image_np = image_np.transpose(2, 1, 0)  # now shape is [X, Y, Z]
+
+        # create SimpleITK image and copy original metadata
+        sitk_img = sitk.GetImageFromArray(image_np)
+        ref_img = sitk.ReadImage(file_path)
+        sitk_img.SetSpacing(ref_img.GetSpacing())
+        sitk_img.SetOrigin(ref_img.GetOrigin())
+        sitk_img.SetDirection(ref_img.GetDirection())
+
+        out_path = os.path.join(series_output_dir,
+                                os.path.basename(file_path).replace(".nii", f"_aug{aug_idx}.nii"))
+        sitk.WriteImage(sitk_img, out_path)
+        print(f"✅ Saved {out_path}")
