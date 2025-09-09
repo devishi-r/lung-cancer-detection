@@ -1,54 +1,58 @@
 import os
-import numpy as np
 import SimpleITK as sitk
-from skimage.metrics import mean_squared_error, peak_signal_noise_ratio, structural_similarity
-from scipy.stats import wasserstein_distance
-from augment import *
+import matplotlib.pyplot as plt
+import numpy as np
 
-def load_dicom_series(dicom_files):
-    reader = sitk.ImageSeriesReader()
-    reader.SetFileNames(dicom_files)
-    image = reader.Execute()
-    return sitk.GetArrayFromImage(image)  # [slices, H, W]
+# =============================
+# Setup
+# =============================
+orig_file = "Preprocessed_Volumes/2_000000-A_phase_5mm_Stnd_SS50-58188_stack1"   # <-- put one of your originals
+aug_file  = "Augmented_Nifti_geom/2_000000-A_phase_5mm_Stnd_SS50-58188/2_000000-A_phase_5mm_Stnd_SS50-58188_stack1_aug1"  # <-- corresponding augmented
 
-def compare_volumes(original_files, augmented_files):
-    # Load series
-    vol_orig = load_dicom_series(original_files).astype(np.float32)
-    vol_aug = load_dicom_series(augmented_files).astype(np.float32)
+# =============================
+# Load with SimpleITK
+# =============================
+orig_img = sitk.ReadImage(orig_file)
+aug_img  = sitk.ReadImage(aug_file)
 
-    # Resize if shapes differ
-    if vol_orig.shape != vol_aug.shape:
-        min_slices = min(vol_orig.shape[0], vol_aug.shape[0])
-        vol_orig = vol_orig[:min_slices]
-        vol_aug = vol_aug[:min_slices]
+orig_np = sitk.GetArrayFromImage(orig_img)  # (Z, Y, X)
+aug_np  = sitk.GetArrayFromImage(aug_img)
 
-    # --- Metrics ---
-    mse = mean_squared_error(vol_orig, vol_aug)
-    psnr = peak_signal_noise_ratio(vol_orig, vol_aug, data_range=vol_orig.max() - vol_orig.min())
-    ssim = structural_similarity(vol_orig, vol_aug, data_range=vol_orig.max() - vol_orig.min(), channel_axis=None)
+# =============================
+# Metadata comparison
+# =============================
+print("---- Metadata Check ----")
+print("Original spacing :", orig_img.GetSpacing(), " | Aug spacing :", aug_img.GetSpacing())
+print("Original size    :", orig_img.GetSize(), "   | Aug size    :", aug_img.GetSize())
+print("Original origin  :", orig_img.GetOrigin(), "  | Aug origin  :", aug_img.GetOrigin())
+print("Original dir     :", orig_img.GetDirection(), " | Aug dir     :", aug_img.GetDirection())
 
-    # Histogram similarity (per slice, averaged)
-    hist_sim = []
-    for i in range(vol_orig.shape[0]):
-        hist_orig, _ = np.histogram(vol_orig[i], bins=100, range=(vol_orig.min(), vol_orig.max()), density=True)
-        hist_aug, _ = np.histogram(vol_aug[i], bins=100, range=(vol_orig.min(), vol_orig.max()), density=True)
-        hist_sim.append(-wasserstein_distance(hist_orig, hist_aug))  # closer to 0 is better
-    hist_sim = np.mean(hist_sim)
+print("\n---- Intensity Check ----")
+print(f"Original intensity: min {orig_np.min():.2f}, max {orig_np.max():.2f}, mean {orig_np.mean():.2f}")
+print(f"Augmented intensity: min {aug_np.min():.2f}, max {aug_np.max():.2f}, mean {aug_np.mean():.2f}")
 
-    return {
-        "MSE": mse,
-        "PSNR": psnr,
-        "SSIM": ssim,
-        "HistogramSim": hist_sim
-    }
+# =============================
+# Histograms
+# =============================
+plt.figure(figsize=(10,5))
+plt.hist(orig_np.flatten(), bins=100, alpha=0.5, label="Original")
+plt.hist(aug_np.flatten(), bins=100, alpha=0.5, label="Augmented")
+plt.legend()
+plt.title("Intensity Histograms")
+plt.show()
 
-# ======================
-# Example usage
-# ======================
-# Original and augmented file lists (from one UID)
-original_files = sorted(class_e_dicom_series[0]["image"])  # first original case
-augmented_dir = os.path.join(output_dir, "10-25-2007-NA-lung-83596", "2.000000-A phase 5mm Stnd SS50-58188", "2.000000-A phase 5mm Stnd SS50-58188_aug0")  # adjust as per your script
-augmented_files = sorted([os.path.join(augmented_dir, f) for f in os.listdir(augmented_dir)])
+# =============================
+# Slice visualization
+# =============================
+z_mid = orig_np.shape[0] // 2  # pick mid slice
+plt.figure(figsize=(12,6))
 
-results = compare_volumes(original_files, augmented_files)
-print("🔍 Similarity Metrics:", results)
+plt.subplot(1,2,1)
+plt.imshow(orig_np[z_mid,:,:], cmap="gray")
+plt.title("Original mid-slice")
+
+plt.subplot(1,2,2)
+plt.imshow(aug_np[z_mid,:,:], cmap="gray")
+plt.title("Augmented mid-slice")
+
+plt.show()

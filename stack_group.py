@@ -5,7 +5,7 @@ import SimpleITK as sitk
 # =============================
 # CONFIG
 # =============================
-data_dir = "Lung-PET-CT-Dx/Lung_Dx-E0001/"     # input root with DICOMs
+data_dir = "Data/"     # input root with DICOMs
 output_dir = "Preprocessed_Volumes"            # where .nii will be saved
 os.makedirs(output_dir, exist_ok=True)
 
@@ -24,31 +24,49 @@ def sanitize_filename(name):
 # =============================
 # STEP 1: Group DICOMs into stacks
 # =============================
-def get_stacks(data_dir):
+def get_stacks(root_dir):
     """
-    Group DICOM slices into stacks based on the filename prefix before '-'.
-    Returns { (series_path, stack_id): [slice_paths] }
+    Recursively group DICOM slices into stacks for multiple patients.
+    Assumes folder structure: patient -> study -> series -> dicom files.
+    Returns: {(series_path, stack_id): [slice_paths]}
     """
     stack_dict = {}
-    for root, _, files in os.walk(data_dir):
-        dicom_files = [f for f in files if f.endswith(".dcm")]
-        if not dicom_files:
+
+    for patient_folder in os.listdir(root_dir):
+        patient_path = os.path.join(root_dir, patient_folder)
+        if not os.path.isdir(patient_path):
             continue
 
-        stacks = {}
-        for f in dicom_files:
-            match = re.match(r"(\d+)-\d+", f)
-            if not match:
+        for study_folder in os.listdir(patient_path):
+            study_path = os.path.join(patient_path, study_folder)
+            if not os.path.isdir(study_path):
                 continue
-            stack_id = int(match.group(1))
-            stacks.setdefault(stack_id, []).append(os.path.join(root, f))
 
-        for stack_id, slices in stacks.items():
-            slices.sort()
-            stack_dict[(root, stack_id)] = slices
+            for series_folder in os.listdir(study_path):
+                series_path = os.path.join(study_path, series_folder)
+                if not os.path.isdir(series_path):
+                    continue
+
+                # Collect all DICOM files in this series
+                dicom_files = [f for f in os.listdir(series_path) if f.endswith(".dcm")]
+                if not dicom_files:
+                    continue
+
+                # Group slices by stack ID (from filename)
+                stacks = {}
+                for f in dicom_files:
+                    match = re.match(r"(\d+)-\d+", f)
+                    if not match:
+                        continue
+                    stack_id = int(match.group(1))
+                    stacks.setdefault(stack_id, []).append(os.path.join(series_path, f))
+
+                # Sort slices within each stack and add to main dict
+                for stack_id, slices in stacks.items():
+                    slices.sort()
+                    stack_dict[(series_path, stack_id)] = slices
 
     return stack_dict
-
 # =============================
 # STEP 2: Convert stack to 3D volume and save as .nii
 # =============================
