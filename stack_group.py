@@ -1,25 +1,22 @@
 import os
 import re
 import SimpleITK as sitk
+from collections import defaultdict
 
 # =============================
 # CONFIG
 # =============================
 data_dir = "Data/"     # input root with DICOMs
-output_dir = "Preprocessed_Volumes"            # where .nii will be saved
+output_dir = "Preprocessed_Volumes"  # where .nii will be saved
 os.makedirs(output_dir, exist_ok=True)
 
 # =============================
-# HELPER: Sanitize filenames for Windows/NIfTI
+# HELPER: Sanitize filenames
 # =============================
 def sanitize_filename(name):
-    # replace spaces and any non-alphanumeric characters with underscore
-    name = re.sub(r"[^\w\-]", "_", name)
-    # remove multiple underscores
-    name = re.sub(r"_+", "_", name)
-    # avoid leading dot
-    name = name.lstrip("_")
-    return name
+    name = re.sub(r"[^\w\-]", "_", name)   # replace spaces/special chars
+    name = re.sub(r"_+", "_", name)        # collapse underscores
+    return name.lstrip("_")                # avoid leading _
 
 # =============================
 # STEP 1: Group DICOMs into stacks
@@ -28,9 +25,10 @@ def get_stacks(root_dir):
     """
     Recursively group DICOM slices into stacks for multiple patients.
     Assumes folder structure: patient -> study -> series -> dicom files.
-    Returns: {(series_path, stack_id): [slice_paths]}
+    Returns: {(patient, series_path, stack_id): [slice_paths]}
     """
     stack_dict = {}
+    stack_count_per_patient = defaultdict(int)
 
     for patient_folder in os.listdir(root_dir):
         patient_path = os.path.join(root_dir, patient_folder)
@@ -47,12 +45,11 @@ def get_stacks(root_dir):
                 if not os.path.isdir(series_path):
                     continue
 
-                # Collect all DICOM files in this series
+                # Collect DICOMs
                 dicom_files = [f for f in os.listdir(series_path) if f.endswith(".dcm")]
                 if not dicom_files:
                     continue
 
-                # Group slices by stack ID (from filename)
                 stacks = {}
                 for f in dicom_files:
                     match = re.match(r"(\d+)-\d+", f)
@@ -61,14 +58,16 @@ def get_stacks(root_dir):
                     stack_id = int(match.group(1))
                     stacks.setdefault(stack_id, []).append(os.path.join(series_path, f))
 
-                # Sort slices within each stack and add to main dict
                 for stack_id, slices in stacks.items():
                     slices.sort()
-                    stack_dict[(series_path, stack_id)] = slices
+                    key = (patient_folder, series_path, stack_id)
+                    stack_dict[key] = slices
+                    stack_count_per_patient[patient_folder] += 1
 
-    return stack_dict
+    return stack_dict, stack_count_per_patient
+
 # =============================
-# STEP 2: Convert stack to 3D volume and save as .nii
+# STEP 2: Convert to NIfTI
 # =============================
 def convert_stack_to_volume(stack_files, output_path):
     try:
@@ -76,32 +75,30 @@ def convert_stack_to_volume(stack_files, output_path):
         reader.SetFileNames(stack_files)
         image = reader.Execute()
 
-        # ensure parent directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        # write as .nii (no compression)
         sitk.WriteImage(image, output_path)
 
-        print(f"\n✅ Saved volume: {output_path} ({len(stack_files)} slices)")
+        print(f"\n✅ Saved: {output_path} ({len(stack_files)} slices)")
         print("   Origin   :", image.GetOrigin())
         print("   Spacing  :", image.GetSpacing())
         print("   Direction:", image.GetDirection())
         print("   Size     :", image.GetSize())
 
     except Exception as e:
-        print(f"❌ Failed to process {output_path}: {e}")
+        print(f"❌ Failed {output_path}: {e}")
 
 # =============================
 # MAIN
 # =============================
 if __name__ == "__main__":
-    stack_dict = get_stacks(data_dir)
-    print(f"📦 Found {len(stack_dict)} stacks in {data_dir}")
+    stack_dict, stack_count_per_patient = get_stacks(data_dir)
+    print(f"📦 Found {len(stack_dict)} stacks in total.\n")
 
-    for (series_path, stack_id), stack_files in stack_dict.items():
-        raw_name = os.path.basename(series_path.rstrip(os.sep))
-        series_name = sanitize_filename(raw_name)
-        out_name = f"{series_name}_stack{stack_id}.nii"  # safe .nii
-        out_path = os.path.join(output_dir, out_name)
+    for patient, count in stack_count_per_patient.items():
+        print(f"   📁 {patient}: {count} stacks")
 
+    for (patient, series_path, stack_id), stack_files in stack_dict.items():
+        series_name = sanitize_filename(os.path.basename(series_path.rstrip(os.sep)))
+        out_name = f"{series_name}_stack{stack_id}.nii"
+        out_path = os.path.join(output_dir, patient, out_name)
         convert_stack_to_volume(stack_files, out_path)
